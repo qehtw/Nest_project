@@ -16,7 +16,8 @@ datasource db {
 model User {
   id            String    @id @default(uuid())
   email         String    @unique
-  password      String    // зберігаємо ХЕШ пароля
+  password      String
+  role          String    @default(uuid())
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   firstName     String
@@ -25,11 +26,11 @@ model User {
 }
 
 model Session {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  id        String    @id @default(uuid())
+  userId    String    @unique
+  user      User      @relation(fields: [userId], references: [id])
   accessToken String  @unique
   refreshToken String @unique
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   expiresAt DateTime
 }

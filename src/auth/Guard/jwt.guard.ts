@@ -1,31 +1,71 @@
 import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
-import { Request } from 'express';
+import { Request, Response as ExpressResponse } from 'express';
 import * as jwt from 'jsonwebtoken';
+import { AuthService } from '../auth.service';
+
+interface RequestWithUser extends Request {
+  user?: { userId: string };
+}
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest<Request>();
+  constructor(private readonly authService: AuthService) { }
 
-    const token = request.cookies?.accessToken;
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<RequestWithUser>();
+    const response = context.switchToHttp().getResponse<ExpressResponse>();
 
-    if (!token) {
-      console.log('No token received from client');
-      throw new UnauthorizedException('Token is missing');
-    } else {
-      console.log('Token from client:', token);
+    const accesstoken = request.cookies.accessToken;
+    console.log('JWT token from request:', accesstoken);
+
+    if (!accesstoken) {
+      throw new UnauthorizedException();
     }
 
-    try {
-      const secret = process.env.JWT_SECRET;
-      if (!secret) throw new Error('JWT_SECRET is not defined');
-      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] });
-      request['user'] = payload;
-      return true;
-      
-    } catch (err) {
-      console.error('JWT verification failed:', (err as Error).message);
-      throw new UnauthorizedException('Invalid or expired token');
+    const isAccessValid = await this.authService.verifyAccessToken(accesstoken);
+
+    if (isAccessValid) {
+      const tokenId = jwt.decode(accesstoken as string) as { userId: string } | null;
+      if (tokenId?.userId) {
+        request.user = { userId: tokenId.userId };
+        console.log('UserId from session:', tokenId.userId);
+
+        return true;
+      }
     }
+
+    const session = await this.authService.getSessionByAccessToken(accesstoken);
+    if (!session) {
+      throw new UnauthorizedException('Session not found');
+    }
+
+    const refreshToken = session.refreshToken;
+    const userId = await this.authService.getUserIdFromToken(refreshToken);
+    if (!userId) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    if (!refreshToken) {
+      throw new UnauthorizedException('No refresh token')
+    }
+
+    const isRefreshValid = await this.authService.verifyRefreshToken(refreshToken);
+    if (!isRefreshValid) {
+      throw new UnauthorizedException('Token is not valid')
+    }
+
+    await this.authService.deleteSessionByRefreshToken(refreshToken);
+    const tokens = await this.authService.generateAndSaveTokens(userId);
+
+    response.cookie('accessToken', tokens.accessToken, {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 3600000,
+      secure: false
+    });
+    request.user = { userId };
+
+    return true;
   }
 }
