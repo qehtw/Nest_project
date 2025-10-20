@@ -1,6 +1,13 @@
-import { IsEmail, IsNotEmpty, MinLength, MaxLength, Matches } from 'class-validator';
+import { IsEmail, IsNotEmpty, MinLength, MaxLength, Matches, IsEnum } from 'class-validator';
+
+export enum Roles {
+  Admin = 'Admin',
+  FruitGuy = 'FruitGuy',
+  VegetableGuy = 'VegetableGuy',
+}
 
 export class RegisterDto {
+
   @IsEmail({}, { message: 'Невірний формат email' })
   email: string;
 
@@ -11,4 +18,7 @@ export class RegisterDto {
     message: 'Пароль має містити великі та малі літери і хоча б одну цифру',
   })
   password: string;
+
+  @IsEnum(Roles, { message: 'Роль має бути однією з: Admin, FruitGuy або VegetableGuy' })
+  role: Roles;
 }

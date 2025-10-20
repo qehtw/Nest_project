@@ -1,15 +1,13 @@
-import { Controller, Get, Post, Body, Res, UseGuards, Req, Redirect } from '@nestjs/common';
+import { Controller, Get, Post, Body, Res, UseGuards, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import type { Response, Request } from 'express';
-import { JwtAuthGuard } from './Guard/jwt.guard';
-import { PrismaService } from '../../prisma/prisma.service';
 
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService, private prisma: PrismaService) { }
+  constructor(private authService: AuthService) { }
 
   @Get('status')
   getStatus() {
@@ -18,97 +16,103 @@ export class AuthController {
   }
 
   @Post('register')
+  async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) response: Response, @Req() request: Request) {
+    const result = await this.authService.register(dto.email, dto.password, dto.role);
 
-  async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) response: Response) {
+    const origin = request.headers.origin || '*';
+    response.setHeader('Access-Control-Allow-Credentials', 'true');
+    response.setHeader('Access-Control-Allow-Origin', origin);
 
-    const result = await this.authService.register(dto.email, dto.password);
     response.cookie(`accessToken`, result.accessToken, {
       httpOnly: true,
       path: '/',
       maxAge: 3600000,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     });
 
     return result
   }
 
   @Post('login')
-  @Redirect('/auth/profile', 302)
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response) {
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response, @Req() request: Request) {
     const result = await this.authService.login(dto.email, dto.password);
+
+    const origin = request.headers.origin || '*';
+    response.setHeader('Access-Control-Allow-Credentials', 'true');
+    response.setHeader('Access-Control-Allow-Origin', origin);
+
     response.cookie(`accessToken`, result.accessToken, {
       httpOnly: true,
       path: '/',
       maxAge: 3600000,
-      secure: false, //process.env.NODE_ENV === 'production'
-      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     });
 
     return result
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Get('profile')
-  async getProfile(@Req() request: Request) {
-    const accessToken = request.cookies.accessToken;
-    const userId = await this.authService.getUserIdFromToken(accessToken);
-    console.log('userId:', userId);
-
-    if (!userId) {
-      throw new Error("No userId found")
-    }
-
-    return this.authService.getUserProfile(userId);
+  @Get('login')
+  getLogin() {
+    return { message: 'Use POST /auth/login with credentials (this endpoint exists to prevent 404 on GET)' };
   }
 
   @Post('logout')
-  @Redirect("/auth/login", 302)
-  async logout(@Res() res: Response, @Req() request: Request) {
-    res.clearCookie('accessToken', { path: '/', httpOnly: true, sameSite: 'lax' })
-    const accessToken = request.cookies.accessToken;
+  async logout(@Res() res: Response, @Req() request: any) {
+    res.clearCookie('accessToken', { path: '/', httpOnly: true, sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', secure: process.env.NODE_ENV === 'production' });
+    const accessToken = request.cookies?.accessToken;
+    if (!accessToken) {
+      return res.json({ message: 'Logged out (no access token found)' });
+    }
     const refreshToken = await this.authService.getRefreshTokenByAccessToken(accessToken);
     if (!refreshToken) {
-      throw new Error('No refresh token found for the provided access token');
+      return res.json({ message: 'Logged out (no refresh token found)' });
     }
-    await this.authService.deleteSessionByRefreshToken(refreshToken)
+    await this.authService.deleteSessionByRefreshToken(refreshToken);
     return res.json({ message: 'Logged out successfully' });
   }
 
-  @Post('refresh')
-  async refresh(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
-    const accessToken = request.cookies.accessToken;
-    if (!accessToken) {
-      throw new Error('No access token provided');
-    }
+  // @Post('refresh')
+  // async refresh(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
+  //   const accessToken = request.cookies.accessToken;
+  //   const role = request.cookies.role
+  //   if (!accessToken) {
+  //     throw new Error('No access token provided');
+  //   }
 
-    const refreshToken = await this.authService.getRefreshTokenByAccessToken(accessToken);
-    if (!refreshToken) {
-      throw new Error('No refresh token found for the provided access token');
-    }
+  //   if (!role) {
+  //     throw new Error('No role provided')
+  //   }
 
-    await this.authService.deleteSessionByRefreshToken(refreshToken);
+  //   const refreshToken = await this.authService.getRefreshTokenByAccessToken(accessToken);
+  //   if (!refreshToken) {
+  //     throw new Error('No refresh token found for the provided access token');
+  //   }
 
-    const userId = await this.authService.getUserIdFromToken(refreshToken);
-    if (!userId) {
-      throw new Error('Invalid refresh token');
-    }
+  //   await this.authService.deleteSessionByRefreshToken(refreshToken);
 
-    const token = await this.authService.generateAndSaveTokens(userId);
-    response.cookie('accessToken', token.accessToken, {
-      httpOnly: true,
-      path: '/',
-      maxAge: 3600000,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-    });
+  //   const userId = await this.authService.getUserIdFromToken(refreshToken);
+  //   if (!userId) {
+  //     throw new Error('Invalid refresh token');
+  //   }
 
-    return token;
-  }
+  //   const token = await this.authService.generateAndSaveTokens(userId, role);
+  //   response.cookie('accessToken', token.accessToken, {
+  //     httpOnly: true,
+  //     path: '/',
+  //     maxAge: 3600000,
+  //     secure: process.env.NODE_ENV === 'production',
+  //     sameSite: 'lax',
+  //   });
+
+  //   return token;
+  // }
 
 }
 
 //{
 //  "email": "test1@example.com",
 //  "password": "123456"
+//  "role": "Admin || FruitGuy || VegetableGuy "
 //}

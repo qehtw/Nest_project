@@ -7,14 +7,14 @@ import * as jwt from 'jsonwebtoken';
 export class AuthService {
   constructor(private prisma: PrismaService) { }
 
-  private generateAccessToken(userId: string) {
+  private generateAccessToken(userId: string, role: string) {
     const secret = process.env.JWT_SECRET;
     if (!secret) {
       throw new Error('JWT_SECRET is not defined');
     }
 
     return jwt.sign(
-      { userId },
+      { userId, role },
       secret,
       { expiresIn: '15m' }
     );
@@ -33,8 +33,8 @@ export class AuthService {
     );
   }
 
-  async generateAndSaveTokens(userId: string) {
-    const accessToken = this.generateAccessToken(userId);
+  async generateAndSaveTokens(userId: string, role: string) {
+    const accessToken = this.generateAccessToken(userId, role);
     const refreshToken = this.generateRefreshToken(userId);
     await this.saveSession(userId, accessToken, refreshToken);
 
@@ -110,12 +110,21 @@ export class AuthService {
     return session?.refreshToken || null;
   }
 
-  async getUserIdFromToken(refreshToken: string) {
-    const userId = (jwt.decode(refreshToken) as { userId: string } | null)?.userId;
-    return userId || null;
+  async getUserIdFromToken(token: string) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET!);
+      return (decoded as { userId: string }).userId;
+    } catch {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET!);
+        return (decoded as { userId: string }).userId;
+      } catch {
+        return null;
+      }
+    }
   }
 
-  async register(email: string, password: string) {
+  async register(email: string, password: string, role: string) {
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
     });
@@ -129,9 +138,10 @@ export class AuthService {
         lastName: '',
         email,
         password: hashedPassword,
+        role,
       },
     });
-    const accessToken = this.generateAccessToken(user.id);
+    const accessToken = this.generateAccessToken(user.id, role);
     const refreshToken = this.generateRefreshToken(user.id);
 
     const storeTokens = await this.prisma.session.upsert({
@@ -150,7 +160,7 @@ export class AuthService {
       },
     });
 
-    return { id: user.id, email: user.email, accessToken: storeTokens.accessToken };
+    return { id: user.id, email: user.email, accessToken: storeTokens.accessToken, role: user.role };
   }
 
   async login(email: string, password: string) {
@@ -167,7 +177,7 @@ export class AuthService {
       throw new BadRequestException('Email or password is incorrect');
     }
 
-    const accessToken = this.generateAccessToken(user.id);
+    const accessToken = this.generateAccessToken(user.id, user.role);
     const refreshToken = this.generateRefreshToken(user.id);
 
     const storeTokens = await this.prisma.session.upsert({
@@ -186,24 +196,5 @@ export class AuthService {
     });
 
     return { id: user.id, email: user.email, accessToken: storeTokens.accessToken };
-  }
-  async getUserProfile(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
-
-    return user;
   }
 }

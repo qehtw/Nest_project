@@ -11,8 +11,6 @@ export class UnauthorizedRedirectFilter implements ExceptionFilter {
   catch(exception: UnauthorizedException, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-
-    // Робимо redirect замість 401
-    response.redirect(302, '/auth/login');
+    response.status(401).json({ message: 'Unauthorized' });
   }
 }
