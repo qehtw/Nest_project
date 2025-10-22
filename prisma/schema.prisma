@@ -65,7 +65,7 @@ model BasketItem {
   quantity  Int       @default(1)
   
   basket   Basket    @relation(fields: [basketId], references: [id])
-  product  Products  @relation(fields: [productId], references: [id])
+  product  Products  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@unique([basketId, productId])
 }

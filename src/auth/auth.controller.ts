@@ -1,21 +1,25 @@
-import { Controller, Get, Post, Body, Res, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Res, Req } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import type { Response, Request } from 'express';
 
 
+@ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) { }
 
   @Get('status')
+  @ApiOperation({ summary: 'Health check' })
   getStatus() {
 
     return { status: 'ok' };
   }
 
   @Post('register')
+  @ApiOperation({ summary: 'Register new user' })
   async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) response: Response, @Req() request: Request) {
     const result = await this.authService.register(dto.email, dto.password, dto.role);
 
@@ -35,6 +39,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @ApiOperation({ summary: 'Login' })
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response, @Req() request: Request) {
     const result = await this.authService.login(dto.email, dto.password);
 
@@ -59,6 +64,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @ApiOperation({ summary: 'Logout' })
   async logout(@Res() res: Response, @Req() request: any) {
     res.clearCookie('accessToken', { path: '/', httpOnly: true, sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', secure: process.env.NODE_ENV === 'production' });
     const accessToken = request.cookies?.accessToken;

@@ -1,88 +1,98 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException, BadRequestException } from "@nestjs/common";
-import { Request } from "express";
-import { UserService } from "src/user/user.service";
-import * as jwt from 'jsonwebtoken';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  ForbiddenException,
+  UnauthorizedException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ROLES_KEY } from './roles.decorator';
-
-interface RequestWithUser extends Request {
-  user?: { userId: string, role: string }
-}
+import { PrismaService } from '../../prisma/prisma.service';
+import { Permission, PERMISSIONS_KEY, PERMISSIONS_MAPPING } from './permissions.enum';
+import type { RequestWithUser } from './jwt.guard';
 
 @Injectable()
 export class RoleGuard implements CanActivate {
-  constructor(private readonly userService: UserService, private readonly reflector: Reflector) { }
+  private readonly logger = new Logger(RoleGuard.name);
+
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly prisma: PrismaService,
+  ) { }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithUser>();
-    const headerAuth = (request.headers['authorization'] || request.headers['Authorization']) as string | undefined;
-    const bearerToken = headerAuth && typeof headerAuth === 'string' && headerAuth.startsWith('Bearer ')
-      ? headerAuth.slice(7)
-      : undefined;
-    const accesstoken = request.cookies?.accessToken || bearerToken;
+    const user = request.user;
+    const role = user?.role;
 
-    if (!accesstoken) {
-      throw new UnauthorizedException('Authentication required');
-    }
+    const requiredPermissions: Permission[] =
+      this.reflector.get<Permission[]>(PERMISSIONS_KEY, context.getHandler()) ||
+      [];
 
-    const userInfo = jwt.decode(accesstoken as string) as { userId?: string, role?: string } | null;
-    if (!userInfo || !userInfo.userId) {
-      throw new UnauthorizedException('Invalid or expired token');
-    }
+    this.logger.debug(`RoleGuard: userRole=${role}, requiredPermissions=${JSON.stringify(requiredPermissions)}`);
 
-    const userId = userInfo.userId;
-    let role = userInfo.role;
-
-    // if role missing, try DB; absence of role is an auth/permission problem -> 403
     if (!role) {
-      const profile = await this.userService.getUserProfile(userId);
-      role = profile?.role;
-      if (!role) throw new ForbiddenException('User role not assigned');
+      this.logger.warn('Role not found');
+      throw new UnauthorizedException('Role not found');
     }
 
-    // read allowed roles metadata
-    const allowedRoles = this.reflector.get<string[]>(ROLES_KEY, context.getHandler()) ||
-      this.reflector.get<string[]>(ROLES_KEY, context.getClass());
-    if (allowedRoles && allowedRoles.length > 0 && !allowedRoles.includes(role)) {
-      // explicit forbidden for role mismatch
-      throw new ForbiddenException(`Role "${role}" is not allowed for this action`);
+    const productClass = await this.resolveProductClass(request);
+    this.logger.debug(`RoleGuard: Resolved productClass = ${productClass}`);
+
+    if (!productClass && requiredPermissions.length > 0) {
+      this.logger.warn('Product class not specified or could not be resolved');
+      throw new BadRequestException('Product class not specified or could not be resolved');
     }
 
-    // Accept product id first, fall back to name
-    const productId = request.body?.productId || request.body?.product;
-    const productName = request.body?.name;
-
-    let productClass: string | undefined;
-    if (productId) {
-      productClass = await this.userService.getProductClassById(productId);
-    } else if (productName) {
-      productClass = await this.userService.getProductClass(productName);
-    } else {
-      // require product identifier only for domain-limited roles
-      if (role === 'FruitGuy' || role === 'VegetableGuy') {
-        throw new BadRequestException('Product identifier required for role-limited action');
-      }
+    if (role === 'Admin') {
+      this.logger.debug('Admin shortcut, access granted');
+      return true;
     }
 
-    if (!productClass) {
-      // product not found -> 400
-      throw new BadRequestException('Product not found');
+    const allowed = productClass !== undefined ? PERMISSIONS_MAPPING[role]?.[productClass] : undefined;
+    this.logger.debug(`RoleGuard: allowed permissions for role=${role}, productClass=${productClass}: ${JSON.stringify(allowed)}`);
+
+    if (!allowed) {
+      this.logger.warn(`Role "${role}" does not have any permissions for "${productClass}"`);
+      throw new ForbiddenException(
+        `Role "${role}" does not have any permissions for "${productClass}"`
+      );
     }
 
-    // role-domain check: return descriptive forbidden when mismatch
-    const isAllowed = await this.userService.isRoleValid(userId, role, productClass);
-    if (!isAllowed) {
-      if (role === 'FruitGuy') {
-        throw new ForbiddenException(`Access denied: role "FruitGuy" can only operate on "Fruits" products (product class: "${productClass}")`);
-      }
-      if (role === 'VegetableGuy') {
-        throw new ForbiddenException(`Access denied: role "VegetableGuy" can only operate on "Vegetables" products (product class: "${productClass}")`);
-      }
-      // generic forbidden fallback
-      throw new ForbiddenException('Access denied for this role');
+    if (requiredPermissions.length === 0) {
+      this.logger.debug('No specific permissions required, access granted');
+      return true;
     }
 
-    // attach user info for downstream handlers/controllers
-    request.user = { userId, role };
-    return true;
+    const hasAll = requiredPermissions.every((perm) => allowed.includes(perm));
+    this.logger.debug(`RoleGuard: hasAllRequiredPermissions=${hasAll}`);
+    if (hasAll) {
+      this.logger.debug('All required permissions present, access granted');
+      return true;
+    }
+
+    this.logger.warn(`Role "${role}" does not have required permissions (${requiredPermissions.join(',')}) for "${productClass}"`);
+    throw new ForbiddenException(
+      `Role "${role}" does not have required permissions (${requiredPermissions.join(
+        ', '
+      )}) for "${productClass}"`
+    );
+  }
+
+  private async resolveProductClass(request: any): Promise<string | undefined> {
+
+    const productId = request.body?.productId ?? request.body?.product ?? request.params?.productId ?? request.params?.id;
+    const productName = request.body?.name ?? request.params?.name;
+
+    if (productId !== undefined && productId !== null) {
+      const product = await this.prisma.products.findUnique({ where: { id: productId } });
+      if (product) return product.class;
+    }
+    if (productName) {
+      const product = await this.prisma.products.findUnique({ where: { name: productName } });
+      if (product) return product.class;
+    }
+    return undefined;
   }
 }

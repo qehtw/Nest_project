@@ -20,7 +20,6 @@ export class UserService {
     }
   }
 
-
   async getUserProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -70,7 +69,6 @@ export class UserService {
   }
 
   async sendItem(userId: string, productName: string, quantity: number) {
-
     if (!productName) {
       throw new NotFoundException("No product name found")
     }
@@ -98,7 +96,6 @@ export class UserService {
     const existingItem = basket.items.find(item => item.productId === product.id);
 
     if (existingItem) {
-
       return this.prisma.basketItem.update({
         where: { id: existingItem.id },
         data: { quantity: existingItem.quantity + quantity },
@@ -114,8 +111,6 @@ export class UserService {
     });
   }
 
-
-  // New: send item by product id
   async sendItemById(userId: string, productId: string, quantity: number) {
     if (!productId) {
       throw new NotFoundException("No product id found")
@@ -163,7 +158,6 @@ export class UserService {
     if (role === 'Admin') {
       return true
     }
-    // Prisma enum values are 'Fruits' and 'Vegetables'
     if (role === "FruitGuy" && productclass === "Fruits") {
       return true;
     }
@@ -181,7 +175,6 @@ export class UserService {
     return productInfo?.class
   }
 
-  // New: get product class by id
   async getProductClassById(id: string) {
     const productInfo = await this.prisma.products.findUnique({
       where: { id }
@@ -190,8 +183,6 @@ export class UserService {
   }
 
   async deleteItemFromBasket(productName: string, userId: string) {
-
-
     if (!productName) {
       throw new NotFoundException("No product name found")
     }
@@ -218,7 +209,6 @@ export class UserService {
     const existingItem = basket.items.find(item => item.productId === product.id);
 
     if (existingItem) {
-
       return this.prisma.basketItem.delete({
         where: { id: existingItem.id }
       });
@@ -229,7 +219,6 @@ export class UserService {
 
   }
 
-  // New: delete item by product id
   async deleteItemFromBasketById(productId: string, userId: string) {
     if (!productId) {
       throw new NotFoundException("No product id found")

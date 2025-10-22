@@ -3,8 +3,8 @@ import { Request, Response as ExpressResponse } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { AuthService } from '../auth/auth.service';
 
-interface RequestWithUser extends Request {
-  user?: { userId: string, role?: string };
+export interface RequestWithUser extends Request {
+  user?: { userId: string, role?: string, productId?: string, productClass?: string };
 }
 
 @Injectable()
@@ -15,7 +15,6 @@ export class JwtAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<RequestWithUser>();
     const response = context.switchToHttp().getResponse<ExpressResponse>();
 
-    // accept token from cookie OR Authorization header
     const headerAuth = (request.headers['authorization'] || request.headers['Authorization']) as string | undefined;
     const bearerToken = headerAuth && typeof headerAuth === 'string' && headerAuth.startsWith('Bearer ')
       ? headerAuth.slice(7)
@@ -39,7 +38,6 @@ export class JwtAuthGuard implements CanActivate {
       return true;
     }
 
-    // refresh flow
     const refreshToken = await this.authService.getRefreshTokenByAccessToken(accesstoken);
     if (!refreshToken) throw new UnauthorizedException('No refresh token');
 
@@ -51,7 +49,6 @@ export class JwtAuthGuard implements CanActivate {
     await this.authService.deleteSessionByRefreshToken(refreshToken);
     const tokens = await this.authService.generateAndSaveTokens(userInfo.userId, userInfo.role || '');
 
-    // keep cookie attributes in sync with auth.controller
     response.cookie('accessToken', tokens.accessToken, {
       path: '/',
       httpOnly: true,
